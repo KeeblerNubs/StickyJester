@@ -41,8 +41,32 @@ def parse_color(color_text: Optional[str]) -> Optional[int]:
         return None
 
 
-def build_embed(config: StickyConfig) -> discord.Embed:
-    embed = discord.Embed(description=config.text)
+def format_pinned_entry(message: discord.Message) -> str:
+    snippet = message.clean_content or "[Embed/Attachment]"
+    snippet = (snippet[:70] + "…") if len(snippet) > 70 else snippet
+    author = getattr(message.author, "display_name", message.author.name)
+    timestamp = discord.utils.format_dt(message.created_at, "R")
+    return f"• {author}: {snippet} ({timestamp}) [Jump]({message.jump_url})"
+
+
+async def collect_pins(guild: discord.Guild):
+    pinned_by_channel = []
+    for channel in guild.text_channels:
+        try:
+            pins = await channel.pins()
+        except (discord.Forbidden, discord.HTTPException):
+            continue
+
+        if pins:
+            pinned_by_channel.append((channel, pins))
+
+    return pinned_by_channel
+
+
+def build_embed(config: StickyConfig, pinned_data, guild: discord.Guild) -> discord.Embed:
+    embed = discord.Embed(title="Server Pinned Messages", description=config.text)
+    embed.set_author(name=guild.name)
+
     if config.color is not None:
         embed.color = discord.Color(config.color)
 
@@ -51,6 +75,18 @@ def build_embed(config: StickyConfig) -> discord.Embed:
 
     if config.thumbnail_url:
         embed.set_thumbnail(url=config.thumbnail_url)
+
+    for channel, pins in pinned_data:
+        entries = [format_pinned_entry(msg) for msg in pins[:5]]
+        value = "\n".join(entries)
+        embed.add_field(
+            name=f"#{channel.name} ({len(pins)} pinned)",
+            value=value or "No pinned content",
+            inline=False,
+        )
+
+    if not pinned_data:
+        embed.add_field(name="Pinned status", value="No pinned messages across this server.", inline=False)
 
     return embed
 
@@ -64,6 +100,8 @@ async def send_sticky(channel: discord.TextChannel, force: bool = False) -> None
     if not force and datetime.utcnow() - last_sent < timedelta(seconds=config.interval_seconds):
         return
 
+    pinned_data = await collect_pins(channel.guild)
+
     previous_message = sticky_messages.get(channel.id)
     if previous_message:
         try:
@@ -71,7 +109,7 @@ async def send_sticky(channel: discord.TextChannel, force: bool = False) -> None
         except discord.HTTPException:
             pass
 
-    embed = build_embed(config)
+    embed = build_embed(config, pinned_data, channel.guild)
     sent = await channel.send(embed=embed)
     sticky_messages[channel.id] = sent
     last_sent_times[channel.id] = datetime.utcnow()
@@ -88,11 +126,21 @@ async def on_message(message: discord.Message):
     if message.author.bot:
         return
 
-    config = sticky_configs.get(message.channel.id)
-    if config:
-        await send_sticky(message.channel)
-
     await bot.process_commands(message)
+
+
+async def refresh_sticky_for_guild(guild: discord.Guild):
+    for channel_id in list(sticky_configs.keys()):
+        target_channel = guild.get_channel(channel_id)
+        if target_channel and isinstance(target_channel, discord.TextChannel):
+            await send_sticky(target_channel, force=True)
+
+
+@bot.event
+async def on_guild_channel_pins_update(channel: discord.abc.GuildChannel, last_pin: Optional[datetime]):
+    guild = channel.guild if hasattr(channel, "guild") else None
+    if guild:
+        await refresh_sticky_for_guild(guild)
 
 
 sticky_group = app_commands.Group(name="sticky", description="Manage sticky messages")
