@@ -1,3 +1,4 @@
+import os
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Dict, Optional
@@ -5,8 +6,11 @@ from typing import Dict, Optional
 import discord
 from discord import app_commands
 from discord.ext import commands
+from firebase_admin import credentials, db, initialize_app
 
 TOKEN = "YOUR_BOT_TOKEN"
+FIREBASE_DATABASE_URL = os.getenv("FIREBASE_DATABASE_URL", "")
+FIREBASE_CREDENTIALS = os.getenv("FIREBASE_CREDENTIALS")
 
 
 @dataclass
@@ -18,6 +22,36 @@ class StickyConfig:
     footer_icon_url: Optional[str] = None
     thumbnail_url: Optional[str] = None
 
+    def to_dict(self) -> Dict[str, Optional[str]]:
+        return {
+            "text": self.text,
+            "interval_seconds": self.interval_seconds,
+            "color": self.color,
+            "footer_text": self.footer_text,
+            "footer_icon_url": self.footer_icon_url,
+            "thumbnail_url": self.thumbnail_url,
+        }
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Optional[str]]):
+        raw_color = data.get("color")
+        if isinstance(raw_color, str):
+            try:
+                color_value = int(raw_color, 16) if raw_color.startswith("#") else int(raw_color)
+            except ValueError:
+                color_value = None
+        else:
+            color_value = raw_color if isinstance(raw_color, int) else None
+
+        return cls(
+            text=data.get("text", ""),
+            interval_seconds=int(data.get("interval_seconds", 30)),
+            color=color_value,
+            footer_text=data.get("footer_text"),
+            footer_icon_url=data.get("footer_icon_url"),
+            thumbnail_url=data.get("thumbnail_url"),
+        )
+
 
 intents = discord.Intents.default()
 intents.message_content = True
@@ -28,6 +62,49 @@ bot = commands.Bot(command_prefix="!", intents=intents)
 sticky_configs: Dict[int, StickyConfig] = {}
 sticky_messages: Dict[int, discord.Message] = {}
 last_sent_times: Dict[int, datetime] = {}
+firebase_initialized = False
+
+
+def init_firebase_if_needed() -> None:
+    global firebase_initialized
+    if firebase_initialized:
+        return
+
+    if not FIREBASE_DATABASE_URL:
+        raise RuntimeError("FIREBASE_DATABASE_URL must be set for Firebase access.")
+
+    if FIREBASE_CREDENTIALS:
+        cred = credentials.Certificate(FIREBASE_CREDENTIALS)
+    else:
+        cred = credentials.ApplicationDefault()
+
+    initialize_app(cred, {"databaseURL": FIREBASE_DATABASE_URL})
+    firebase_initialized = True
+
+
+def get_config_ref():
+    init_firebase_if_needed()
+    return db.reference("/sticky_configs")
+
+
+def load_configs_from_firebase():
+    remote_data = get_config_ref().get() or {}
+    sticky_configs.clear()
+    for channel_id_str, config_data in remote_data.items():
+        try:
+            channel_id = int(channel_id_str)
+        except ValueError:
+            continue
+
+        sticky_configs[channel_id] = StickyConfig.from_dict(config_data)
+
+
+def persist_config_to_firebase(channel_id: int, config: StickyConfig):
+    get_config_ref().child(str(channel_id)).set(config.to_dict())
+
+
+def remove_config_from_firebase(channel_id: int):
+    get_config_ref().child(str(channel_id)).delete()
 
 
 def parse_color(color_text: Optional[str]) -> Optional[int]:
@@ -118,6 +195,10 @@ async def send_sticky(channel: discord.TextChannel, force: bool = False) -> None
 @bot.event
 async def on_ready():
     await bot.tree.sync()
+    load_configs_from_firebase()
+    for guild in bot.guilds:
+        await refresh_sticky_for_guild(guild)
+
     print(f"Logged in as {bot.user}")
 
 
@@ -187,6 +268,8 @@ async def set_sticky(
         thumbnail_url=thumbnail_url,
     )
 
+    persist_config_to_firebase(target_channel.id, sticky_configs[target_channel.id])
+
     await interaction.response.send_message(
         f"Sticky saved for {target_channel.mention}. Refreshes every {interval_seconds}s.",
         ephemeral=True,
@@ -206,6 +289,7 @@ async def remove_sticky(
         return
 
     sticky_configs.pop(target_channel.id, None)
+    remove_config_from_firebase(target_channel.id)
 
     previous_message = sticky_messages.pop(target_channel.id, None)
     if previous_message:
