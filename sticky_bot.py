@@ -1,3 +1,4 @@
+import asyncio
 import os
 from dataclasses import dataclass
 from datetime import datetime, timedelta
@@ -65,6 +66,20 @@ last_sent_times: Dict[int, datetime] = {}
 firebase_initialized = False
 
 
+@dataclass
+class PinnedContent:
+    text: str
+    attachment_url: Optional[str]
+    author_id: int
+    message_link: str
+
+
+pinned_content: Dict[int, PinnedContent] = {}
+last_user_activity: Dict[int, datetime] = {}
+inactivity_tasks: Dict[int, asyncio.Task] = {}
+last_pin_post: Dict[int, datetime] = {}
+
+
 def init_firebase_if_needed() -> None:
     global firebase_initialized
     if firebase_initialized:
@@ -124,6 +139,56 @@ def format_pinned_entry(message: discord.Message) -> str:
     author = getattr(message.author, "display_name", message.author.name)
     timestamp = discord.utils.format_dt(message.created_at, "R")
     return f"• {author}: {snippet} ({timestamp}) [Jump]({message.jump_url})"
+
+
+def mark_channel_active(channel_id: int) -> None:
+    last_user_activity[channel_id] = datetime.utcnow()
+
+
+async def purge_entire_channel(channel: discord.TextChannel) -> None:
+    while True:
+        deleted = await channel.purge(limit=100, bulk=True)
+        if not deleted:
+            break
+
+
+async def post_saved_pin(channel: discord.TextChannel, pin: PinnedContent) -> None:
+    author_mention = f"<@{pin.author_id}>"
+    parts = [f"Pinned content requested by {author_mention}:", pin.text]
+    if pin.attachment_url:
+        parts.append(f"Attachment: {pin.attachment_url}")
+    parts.append(f"Original message: {pin.message_link}")
+    await channel.send("\n".join(parts))
+
+
+async def wait_for_inactivity_and_post(channel_id: int) -> None:
+    while True:
+        await asyncio.sleep(60)
+
+        channel = bot.get_channel(channel_id)
+        pin = pinned_content.get(channel_id)
+        if not pin or not channel or not isinstance(channel, discord.TextChannel):
+            inactivity_tasks.pop(channel_id, None)
+            return
+
+        last_seen = last_user_activity.get(channel_id, datetime.utcnow())
+        last_post_time = last_pin_post.get(channel_id, datetime.min)
+        if last_seen <= last_post_time:
+            continue
+
+        if datetime.utcnow() - last_seen >= timedelta(hours=1):
+            try:
+                await purge_entire_channel(channel)
+                await post_saved_pin(channel, pin)
+            except discord.HTTPException:
+                pass
+            last_pin_post[channel_id] = datetime.utcnow()
+
+
+def ensure_inactivity_task(channel_id: int) -> None:
+    if channel_id in inactivity_tasks:
+        return
+    inactivity_tasks[channel_id] = bot.loop.create_task(wait_for_inactivity_and_post(channel_id))
 
 
 async def collect_pins(guild: discord.Guild):
@@ -207,6 +272,9 @@ async def on_message(message: discord.Message):
     if message.author.bot:
         return
 
+    if message.channel and isinstance(message.channel, discord.TextChannel):
+        mark_channel_active(message.channel.id)
+
     await bot.process_commands(message)
 
 
@@ -222,6 +290,56 @@ async def on_guild_channel_pins_update(channel: discord.abc.GuildChannel, last_p
     guild = channel.guild if hasattr(channel, "guild") else None
     if guild:
         await refresh_sticky_for_guild(guild)
+
+
+@bot.tree.command(name="pin", description="Capture a message to auto-post after inactivity")
+async def capture_pin(interaction: discord.Interaction):
+    channel = interaction.channel
+    if channel is None or not isinstance(channel, discord.TextChannel):
+        await interaction.response.send_message(
+            "This command can only be used in a text channel.", ephemeral=True
+        )
+        return
+
+    await interaction.response.send_message(
+        "Please Upload the Image/Text of what u want to be pinned. then press enter.",
+        ephemeral=True,
+    )
+    mark_channel_active(channel.id)
+
+    def check(message: discord.Message) -> bool:
+        return (
+            message.author.id == interaction.user.id
+            and message.channel.id == channel.id
+        )
+
+    try:
+        user_message = await bot.wait_for("message", timeout=120, check=check)
+    except asyncio.TimeoutError:
+        await interaction.followup.send(
+            "Timed out waiting for the content to pin.", ephemeral=True
+        )
+        return
+
+    attachment_url = user_message.attachments[0].url if user_message.attachments else None
+    content_text = user_message.content.strip() if user_message.content else ""
+    if not content_text and not attachment_url:
+        content_text = "[No text provided]"
+
+    pinned_content[channel.id] = PinnedContent(
+        text=content_text,
+        attachment_url=attachment_url,
+        author_id=interaction.user.id,
+        message_link=user_message.jump_url,
+    )
+
+    mark_channel_active(channel.id)
+    ensure_inactivity_task(channel.id)
+
+    await interaction.followup.send(
+        "Content saved. It will purge this channel and repost the pinned content after 1 hour of inactivity.",
+        ephemeral=True,
+    )
 
 
 sticky_group = app_commands.Group(name="sticky", description="Manage sticky messages")
