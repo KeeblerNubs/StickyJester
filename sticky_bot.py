@@ -9,7 +9,7 @@ from discord import app_commands
 from discord.ext import commands
 from firebase_admin import credentials, db, initialize_app
 
-TOKEN = "YOUR_BOT_TOKEN"
+TOKEN = os.getenv("DISCORD_BOT_TOKEN")
 FIREBASE_DATABASE_URL = os.getenv("FIREBASE_DATABASE_URL", "")
 FIREBASE_CREDENTIALS = os.getenv("FIREBASE_CREDENTIALS")
 
@@ -485,4 +485,9 @@ async def sticky_info(
 bot.tree.add_command(sticky_group)
 
 if __name__ == "__main__":
+    if not TOKEN:
+        raise RuntimeError(
+            "DISCORD_BOT_TOKEN environment variable is required to start the bot."
+        )
+
     bot.run(TOKEN)
