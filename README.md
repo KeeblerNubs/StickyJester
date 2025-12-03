@@ -27,6 +27,34 @@ Sticky Bot For The Windsor Discord Server
 
 Sticky configurations are persisted in Firebase under the `/sticky_configs` path so they survive bot restarts.
 
+## Discord portal walkthrough (Windows-friendly)
+
+1. **Create the application and bot user** (https://discord.com/developers/applications):
+   - **New Application → Name it** (e.g., "StickyJester").
+   - **Bot → Add Bot**.
+   - Under **Privileged Gateway Intents**, **enable**:
+     - **Message Content Intent** (required because the bot watches channel messages).  
+     - Presence/Server Member intents are optional for this bot.
+   - Under **Bot Permissions**, grant at minimum:
+     - **Send Messages**, **Embed Links**, **Read Message History** (core for stickies).
+     - **Manage Messages** (needed to delete/replace the sticky and purge on inactivity).
+     - **Attach Files** (if you expect images in embeds).
+   - Click **Reset Token** and copy the token into your `.env` (`DISCORD_BOT_TOKEN`).
+
+2. **Invite link** (OAuth2 → URL Generator):
+   - Scopes: `bot` and `applications.commands`.
+   - Bot Permissions: select the permissions above; Discord will append a permission integer to the invite link.
+   - Copy the generated URL and open it in your browser to add the bot to your server.
+
+3. **Firebase prep**:
+   - Create a Realtime Database and note the **Database URL** (`https://<project-id>.firebaseio.com`).
+   - Create a **Service Account JSON** and store it somewhere safe (see Docker notes below for mounting).
+
+4. **Windows 10/.env tips**:
+   - PowerShell: `copy .env.example .env` then `notepad .env`. Use double quotes around values with symbols.
+   - If you use **WSL2**, run `cp .env.example .env && nano .env` inside the repo; export variables with `set -a && source .env && set +a` before starting the bot.
+   - Keep tokens out of PowerShell history by using `setx` or editing the file directly instead of inline `set`.
+
 ## Run with Docker Desktop (Windows 10 friendly)
 
 These steps assume Docker Desktop is installed with WSL2 backend enabled and virtualization turned on in the BIOS. If Windows Defender Firewall prompts when Docker starts, allow access so containers can reach the network.
@@ -62,3 +90,16 @@ These steps assume Docker Desktop is installed with WSL2 backend enabled and vir
 Common Windows notes:
 - Use absolute Windows paths when mounting files (e.g., `C:\path\to\firebase-service-account.json`).
 - Ensure the mounted path is within a directory that Docker Desktop is allowed to access (check Settings → Resources → File Sharing).
+
+## Command cheat sheet
+
+- `/pin`
+  - Ephemeral prompt asks you to post the content to pin (text and optional attachment).
+  - After **1 hour of channel inactivity**, the bot purges the channel and reposts the saved content.
+- `/sticky set`
+  - Creates or updates a sticky embed in a channel. Arguments: target channel (optional, defaults to current), text, interval in seconds (5–3600), optional color hex, footer text/icon URL, and thumbnail URL.
+  - The sticky is refreshed on the configured interval and whenever pins change.
+- `/sticky remove`
+  - Deletes the sticky for the chosen/current channel and removes the config from Firebase.
+- `/sticky info`
+  - Shows the current sticky configuration for the channel.
