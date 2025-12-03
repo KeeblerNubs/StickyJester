@@ -217,6 +217,38 @@ async def refresh_sticky_for_guild(guild: discord.Guild):
             await send_sticky(target_channel, force=True)
 
 
+def find_welcome_channel(guild: discord.Guild) -> Optional[discord.TextChannel]:
+    preferred = [guild.system_channel] if guild.system_channel else []
+    candidates = preferred + list(guild.text_channels)
+    for channel in candidates:
+        if not isinstance(channel, discord.TextChannel):
+            continue
+
+        permissions = channel.permissions_for(guild.me)
+        if permissions.send_messages and permissions.embed_links:
+            return channel
+
+    return None
+
+
+@bot.event
+async def on_guild_join(guild: discord.Guild):
+    channel = find_welcome_channel(guild)
+    if not channel:
+        return
+
+    embed = discord.Embed(
+        title="Thanks For Adding CredentialBot!",
+        description=(
+            "Please move the CredentialBot role under Role Settings to be under the "
+            "FOUNDER/OWNER role."
+        ),
+        color=discord.Color.blurple(),
+    )
+
+    await channel.send(embed=embed)
+
+
 @bot.event
 async def on_guild_channel_pins_update(channel: discord.abc.GuildChannel, last_pin: Optional[datetime]):
     guild = channel.guild if hasattr(channel, "guild") else None
