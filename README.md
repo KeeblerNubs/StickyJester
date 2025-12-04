@@ -59,6 +59,34 @@ Sticky configurations are persisted in Firebase under the `/sticky_configs` path
 
 These steps assume Docker Desktop is installed with WSL2 backend enabled and virtualization turned on in the BIOS. If Windows Defender Firewall prompts when Docker starts, allow access so containers can reach the network.
 
+### Docker Compose (recommended full setup)
+
+1. Copy the env file and edit secrets:
+   ```powershell
+   copy .env.example .env
+   notepad .env
+   ```
+
+2. Place your Firebase service account JSON next to the repo (default name `firebase-service-account.json`). If you keep it elsewhere, set an override path:
+   - PowerShell/CMD: `setx FIREBASE_CREDENTIALS_PATH "C:\path\to\firebase-service-account.json"`
+   - WSL2: `export FIREBASE_CREDENTIALS_PATH=/mnt/c/path/to/firebase-service-account.json`
+
+3. Start the stack (from the repo root):
+   ```powershell
+   docker compose up --build -d
+   ```
+   - Uses `docker-compose.yml` to build the image, load `.env`, and bind-mount the service account to `/app/firebase-service-account.json` (matching the default `FIREBASE_CREDENTIALS` path).
+   - Stop and clean up with `docker compose down`.
+
+4. View logs and check health:
+   ```powershell
+   docker compose logs -f
+   docker compose ps
+   ```
+   - If Discord token/Firebase URL are missing, the container will exit with an error.
+
+### Manual Docker run (alternative)
+
 1. Copy and edit environment variables (if you have not already):
    ```powershell
    copy .env.example .env
@@ -90,6 +118,17 @@ These steps assume Docker Desktop is installed with WSL2 backend enabled and vir
 Common Windows notes:
 - Use absolute Windows paths when mounting files (e.g., `C:\path\to\firebase-service-account.json`).
 - Ensure the mounted path is within a directory that Docker Desktop is allowed to access (check Settings → Resources → File Sharing).
+
+## Firebase Realtime Database rules
+
+- A hardened rule set for the bot lives in `firebase.rules.json`. The bot runs with a service account (bypassing these rules), but they block public client access.
+- Deploy with the Firebase CLI (install via `npm i -g firebase-tools`):
+  ```powershell
+  firebase deploy --only database --project <your-project-id> --token <ci-token-if-needed>
+  ```
+- The rules enforce:
+  - `.read`/`.write` locked down globally unless authenticated.
+  - Validation for `sticky_configs/*` fields (`text`, `interval_seconds` bounds, and optional color/footer/thumbnail fields).
 
 ## Command cheat sheet
 

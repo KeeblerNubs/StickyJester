@@ -1,0 +1,16 @@
+version: "3.9"
+
+services:
+  stickyjester:
+    build: .
+    image: stickyjester:latest
+    env_file:
+      - .env
+    environment:
+      - FIREBASE_CREDENTIALS=${FIREBASE_CREDENTIALS:-/app/firebase-service-account.json}
+    volumes:
+      - type: bind
+        source: ${FIREBASE_CREDENTIALS_PATH:-./firebase-service-account.json}
+        target: /app/firebase-service-account.json
+        read_only: true
+    restart: unless-stopped
