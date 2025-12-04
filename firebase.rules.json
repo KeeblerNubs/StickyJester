@@ -1,0 +1,33 @@
+{
+  "rules": {
+    ".read": false,
+    ".write": false,
+    "sticky_configs": {
+      ".read": "auth != null",
+      ".write": "auth != null",
+      "$channelId": {
+        "text": {
+          ".validate": "newData.isString() && newData.val().length <= 2000"
+        },
+        "interval_seconds": {
+          ".validate": "newData.isNumber() && newData.val() >= 5 && newData.val() <= 3600"
+        },
+        "color": {
+          ".validate": "!newData.exists() || newData.isNumber()"
+        },
+        "footer_text": {
+          ".validate": "!newData.exists() || newData.isString()"
+        },
+        "footer_icon_url": {
+          ".validate": "!newData.exists() || newData.isString()"
+        },
+        "thumbnail_url": {
+          ".validate": "!newData.exists() || newData.isString()"
+        },
+        "$other": {
+          ".validate": false
+        }
+      }
+    }
+  }
+}
