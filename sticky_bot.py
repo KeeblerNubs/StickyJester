@@ -80,6 +80,28 @@ inactivity_tasks: Dict[int, asyncio.Task] = {}
 last_pin_post: Dict[int, datetime] = {}
 
 
+def resolve_credentials_path(raw_path: str) -> str:
+    expanded = os.path.expanduser(os.path.expandvars(raw_path))
+    normalized = os.path.normpath(expanded)
+
+    candidates = [normalized]
+    normalized_forward = normalized.replace("\\", "/")
+    if normalized_forward not in candidates:
+        candidates.append(normalized_forward)
+
+    for candidate in candidates:
+        if os.path.isfile(candidate):
+            return candidate
+
+    raise FileNotFoundError(
+        (
+            "Firebase credentials file not found. "
+            "Tried: {tried}. Check that the path exists, use forward slashes on Windows, "
+            "and make sure the file is mounted inside Docker (default /app/firebase-service-account.json)."
+        ).format(tried=", ".join(candidates))
+    )
+
+
 def init_firebase_if_needed() -> None:
     global firebase_initialized
     if firebase_initialized:
@@ -89,7 +111,8 @@ def init_firebase_if_needed() -> None:
         raise RuntimeError("FIREBASE_DATABASE_URL must be set for Firebase access.")
 
     if FIREBASE_CREDENTIALS:
-        cred = credentials.Certificate(FIREBASE_CREDENTIALS)
+        cred_path = resolve_credentials_path(FIREBASE_CREDENTIALS)
+        cred = credentials.Certificate(cred_path)
     else:
         cred = credentials.ApplicationDefault()
 
