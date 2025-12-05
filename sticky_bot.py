@@ -205,6 +205,22 @@ async def collect_pins(guild: discord.Guild):
     return pinned_by_channel
 
 
+def resolve_text_channel(
+    *, interaction: discord.Interaction, fallback: Optional[discord.TextChannel] = None
+) -> Optional[discord.TextChannel]:
+    if fallback and isinstance(fallback, discord.TextChannel):
+        return fallback
+
+    channel = interaction.channel
+    if channel and isinstance(channel, discord.TextChannel):
+        return channel
+
+    if interaction.guild:
+        return find_welcome_channel(interaction.guild)
+
+    return None
+
+
 def build_embed(config: StickyConfig, pinned_data, guild: discord.Guild) -> discord.Embed:
     embed = discord.Embed(title="Server Pinned Messages", description=config.text)
     embed.set_author(name=guild.name)
@@ -326,10 +342,11 @@ async def on_guild_channel_pins_update(channel: discord.abc.GuildChannel, last_p
 
 @bot.tree.command(name="pin", description="Capture a message to auto-post after inactivity")
 async def capture_pin(interaction: discord.Interaction):
-    channel = interaction.channel
-    if channel is None or not isinstance(channel, discord.TextChannel):
+    channel = resolve_text_channel(interaction=interaction)
+    if channel is None:
         await interaction.response.send_message(
-            "This command can only be used in a text channel.", ephemeral=True
+            "Please specify or navigate to a text channel to use this command.",
+            ephemeral=True,
         )
         return
 
@@ -397,9 +414,12 @@ async def set_sticky(
     footer_icon_url: Optional[str] = None,
     thumbnail_url: Optional[str] = None,
 ):
-    target_channel = channel or interaction.channel
+    target_channel = resolve_text_channel(interaction=interaction, fallback=channel)
     if target_channel is None:
-        await interaction.response.send_message("No channel provided.", ephemeral=True)
+        await interaction.response.send_message(
+            "No accessible text channel found. Please provide one explicitly.",
+            ephemeral=True,
+        )
         return
 
     color = parse_color(color_hex)
@@ -433,9 +453,12 @@ async def set_sticky(
 async def remove_sticky(
     interaction: discord.Interaction, channel: Optional[discord.TextChannel]
 ):
-    target_channel = channel or interaction.channel
+    target_channel = resolve_text_channel(interaction=interaction, fallback=channel)
     if target_channel is None:
-        await interaction.response.send_message("No channel provided.", ephemeral=True)
+        await interaction.response.send_message(
+            "No accessible text channel found. Please provide one explicitly.",
+            ephemeral=True,
+        )
         return
 
     sticky_configs.pop(target_channel.id, None)
@@ -458,9 +481,12 @@ async def remove_sticky(
 async def sticky_info(
     interaction: discord.Interaction, channel: Optional[discord.TextChannel]
 ):
-    target_channel = channel or interaction.channel
+    target_channel = resolve_text_channel(interaction=interaction, fallback=channel)
     if target_channel is None:
-        await interaction.response.send_message("No channel provided.", ephemeral=True)
+        await interaction.response.send_message(
+            "No accessible text channel found. Please provide one explicitly.",
+            ephemeral=True,
+        )
         return
 
     config = sticky_configs.get(target_channel.id)
